@@ -89,10 +89,9 @@ def md5sum(file):
         return None
 
 
-def download_fastq(fasp, ftp, outdir, md5, max_retry=10):
+def download_fastq(fasp, ftp, outdir, md5, max_retry=10, use_ftp=False):
     """Download FASTQ from ENA using Apera Connect."""
     success = False
-    use_ftp = False
     retries = 0
     fastq = '{0}/{1}'.format(
         outdir, format(os.path.basename(fasp))
@@ -195,6 +194,8 @@ if __name__ == '__main__':
                         help='Query is an experiment accession.')
     group1.add_argument('--is_run', action='store_true', default=False,
                         help='Query is a run accession.')
+    group1.add_argument('--ftp', action='store_true', default=False,
+                        help='Skip Aspera Connect and use FTP downloads.')
     group1.add_argument('--nextflow', action='store_true', default=False,
                         help='Output instrument model and paired status.')
     group1.add_argument('--debug', action='store_true', default=False,
@@ -270,7 +271,7 @@ if __name__ == '__main__':
             # Download Run
             if md5[i] and not args.debug:
                 success, fastq = download_fastq(aspera[i], ftp[i], outdir,
-                                                md5[i])
+                                                md5[i], use_ftp=args.ftp)
                 if success:
                     if args.group_by_experiment or args.group_by_sample:
                         name = run["sample_accession"]
