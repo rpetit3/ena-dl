@@ -11,10 +11,10 @@ RUN apt-get update && \
 
 RUN mkdir /aspera /data && \
     cd /tmp && \
-    wget --quiet http://download.asperasoft.com/download/sw/connect/3.7.4/aspera-connect-3.7.4.147727-linux-64.tar.gz && \
-    tar -xzf aspera-connect-3.7.4.147727-linux-64.tar.gz && \
-    sed -i 's=INSTALL_DIR\=~/.aspera/connect=INSTALL_DIR\=/aspera=' aspera-connect-3.7.4.147727-linux-64.sh && \
-    bash aspera-connect-3.7.4.147727-linux-64.sh
+    wget --quiet https://download.asperasoft.com/download/sw/connect/3.9.6/ibm-aspera-connect-3.9.6.173386-linux-g2.12-64.tar.gz && \
+    tar -xzf ibm-aspera-connect-3.9.6.173386-linux-g2.12-64.tar.gz && \
+    sed -i 's=INSTALL_DIR\=~/.aspera/connect=INSTALL_DIR\=/aspera=' ibm-aspera-connect-3.9.6.173386-linux-g2.12-64.sh && \
+    bash ibm-aspera-connect-3.9.6.173386-linux-g2.12-64.sh
 
 ENV ASCP /aspera/bin/ascp
 ENV ASCP_KEY /aspera/etc/asperaweb_id_dsa.openssh

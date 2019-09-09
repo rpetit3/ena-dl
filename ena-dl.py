@@ -1,11 +1,52 @@
 #! /usr/bin/env python3
+"""
+usage: ena-dl [-h] [--aspera STRING] [--aspera_key STRING]
+              [--aspera_speed STRING] [--is_study] [--is_experiment]
+              [--is_run] [--group_by_experiment] [--group_by_sample]
+              [--outdir OUTPUT_DIR] [--max_retry INT] [--ftp_only] [--silent]
+              [--debug] [--version]
+              ACCESSION
 
+ena-dl - Download FASTQs from ENA
+
+optional arguments:
+  -h, --help            show this help message and exit
+
+Required Options:
+
+  ACCESSION             ENA accession to query. (Study, Experiment, or Run
+                        accession)
+
+Aspera Connect Options:
+  --aspera STRING       Path to the Aspera Connect tool "ascp" (Default:
+                        "which ascp")
+  --aspera_key STRING   Path to Aspera Connect private key, if not given,
+                        guess based on ascp path
+  --aspera_speed STRING
+                        Speed at which Aspera Connect will download. (Default:
+                        100M)
+
+Query Related Options:
+  --is_study            Query is a Study.
+  --is_experiment       Query is an Experiment.
+  --is_run              Query is a Run.
+  --group_by_experiment
+                        Group Runs by experiment accession.
+  --group_by_sample     Group Runs by sample accession.
+
+Helpful Options:
+  --outdir OUTPUT_DIR   Directory to output downloads to. (Default: ./)
+  --max_retry INT       Maximum times to retry downloads (Default: 10)
+  --ftp_only            FTP only downloads.
+  --silent              Only critical errors will be printed.
+  --debug               Skip downloads, print what will be downloaded.
+  --version             show program's version number and exit
+"""
+PROGRAM = "ena-dl"
+VERSION = "1.0.0"
 import logging
-import json
 import os
 import subprocess
-import sys
-import time
 
 ENA_URL = ('https://www.ebi.ac.uk/ena/data/warehouse/search?result=read_run&'
            'display=report')
@@ -30,33 +71,30 @@ FIELDS = [
 
 def output_handler(output, redirect='>'):
     if output:
-        return [open(output, 'w'), '{0} {1}'.format(redirect, output)]
+        return [open(output, 'w'), f'{redirect} {output}']
     else:
         return [subprocess.PIPE, '']
 
 
 def onfinish_handler(cmd, out, err, returncode):
-    out = '\n{0}'.format(out) if out else ''
-    err = '\n{0}'.format(err) if err else ''
+    out = f'\n{out}' if out else ''
+    err = f'\n{err}' if err else ''
     if returncode != 0:
-        logging.error('COMMAND: {0}'.format(cmd))
-        logging.error('STDOUT: {0}'.format(out))
-        logging.error('STDERR: {0}'.format(err))
-        logging.error('END\n'.format(err))
+        logging.error(f'COMMAND: {cmd}')
+        logging.error(f'STDOUT: {out}')
+        logging.error(f'STDERR: {err}')
+        logging.error('END\n')
         raise RuntimeError(err)
     else:
-        logging.info('COMMAND: {0}'.format(cmd))
-        logging.info('STDOUT: {0}'.format(out))
-        logging.info('STDERR: {0}'.format(err))
-        logging.info('END\n'.format(err))
+        logging.info(f'COMMAND: {cmd}')
+        logging.info(f'STDOUT: {out}')
+        logging.info(f'STDERR: {err}')
+        logging.info(f'END\n')
         return [out, err]
 
 
 def byte_to_string(b):
-    if b:
-        return b.decode("utf-8")
-    else:
-        return ''
+    return b.decode("utf-8") if b else ''
 
 
 def run_command(cmd, cwd=os.getcwd(), stdout=False, stderr=False):
@@ -64,15 +102,14 @@ def run_command(cmd, cwd=os.getcwd(), stdout=False, stderr=False):
     stdout, stdout_str = output_handler(stdout)
     stderr, stderr_str = output_handler(stderr, redirect='2>')
     p = subprocess.Popen(cmd, stdout=stdout, stderr=stderr, cwd=cwd)
-
     out, err = p.communicate()
     return onfinish_handler(
-        '{0} {1} {2}'.format(' '.join(cmd), stdout_str, stderr_str),
+        f'{" ".join(cmd)} {stdout_str} {stderr_str}',
         byte_to_string(out), byte_to_string(err), p.returncode
     )
 
 
-def log_stdout(message, quiet=False):
+def log_stdout(message):
     logging.info(message)
 
 
@@ -89,33 +126,35 @@ def md5sum(file):
         return None
 
 
-def download_fastq(fasp, ftp, outdir, md5, max_retry=10, use_ftp=False):
+def download_fastq(fasp, ftp, outdir, md5, aspera, max_retry=10, ftp_only=False):
     """Download FASTQ from ENA using Apera Connect."""
+    import time
     success = False
     retries = 0
-    fastq = '{0}/{1}'.format(
-        outdir, format(os.path.basename(fasp))
-    )
+    fastq = f'{outdir}/{os.path.basename(fasp)}'
 
     if not os.path.exists(fastq):
         if not os.path.isdir(outdir):
             run_command(['mkdir', '-p', outdir])
 
         while not success:
-            if use_ftp:
-                run_command(['wget', '-O', fastq, ftp])
+            if ftp_only:
+                log_stdout(f'\t\tFTP download attempt {retries + 1}')
+                run_command(['wget', '--quiet', '-O', fastq, ftp])
             else:
-                run_command([os.environ['ASCP'], '-QT', '-l', '300m',
-                            '-P33001', '-i', os.environ['ASCP_KEY'],
-                            'era-fasp@{0}'.format(fasp), outdir])
+                log_stdout(f'\t\tAspera Connect download attempt {retries + 1}')
+                run_command([
+                    aspera['ascp'], '-QT', '-l', aspera['speed'], '-P33001',
+                    '-i',aspera['private_key'], f'era-fasp@{fasp}', outdir
+                ])
 
             if md5sum(fastq) != md5:
                 retries += 1
                 if os.path.exists(fastq):
                     os.remove(fastq)
                 if retries > max_retry:
-                    if not use_ftp:
-                        use_ftp = True
+                    if not ftp_only:
+                        ftp_only = True
                         retries = 0
                     else:
                         break
@@ -145,7 +184,7 @@ def merge_runs(runs, output):
 def get_run_info(experiment):
     """Retreive a list of unprocessed samples avalible from ENA."""
     import requests
-    url = '{0}&query="{1}"&fields={2}'.format(ENA_URL, query, ",".join(FIELDS))
+    url = f'{ENA_URL}&query="{query}"&fields={",".join(FIELDS)}'
     r = requests.get(url)
     if r.status_code == requests.codes.ok:
         data = []
@@ -164,114 +203,150 @@ def get_run_info(experiment):
 
 def write_json(data, output):
     """Write input data structure to a json file."""
+    import json
     with open(output, 'w') as fh:
         json.dump(data, fh, indent=4, sort_keys=True)
 
 
+def parse_query(query, is_study, is_experiment, is_run):
+    "Parse user query, to determine search field value."
+    if is_study:
+        return f'study_accession={query}'
+    elif is_experiment:
+        return f'experiment_accession={query}'
+    elif args.is_run:
+        return f'run_accession={query}'
+    else:
+        # Try to guess...
+        if query[1:3] == 'RR':
+            return f'run_accession={query}'
+        elif query[1:3] == 'RX':
+            return f'experiment_accession={query}'
+        else:
+            return f'study_accession={query}'
+
+
+def check_aspera(ascp, private_key, speed):
+    "Verify Aspera Connect is available, not if it works."
+    error_message = None
+    if not os.path.exists(ascp):
+        error_message = f'cannot access "{ascp}": No such file or directory'
+    else:
+        if private_key:
+            # User provided path to private key
+            if not os.path.exists(private_key):
+                error_message = f'cannot access "{private_key}": No such file or directory'
+        else:
+            # Try to guess private key path, based on ascp path
+            key_path = os.path.dirname(ascp).replace('/bin', '/etc')
+            private_key = f'{key_path}/asperaweb_id_dsa.openssh'
+            if not os.path.exists(private_key):
+                error_message = f'cannot access "{private_key}": No such file or directory'
+
+    if error_message:
+        logging.ERROR(f'Aspera Related Error: {error_message}')
+        sys.exit(1)
+    else:
+        return {'ascp': ascp, 'private_key': private_key, 'speed': speed}
+
+
+
 if __name__ == '__main__':
     import argparse as ap
+    import sys
 
     parser = ap.ArgumentParser(
         prog='ena-dl',
         conflict_handler='resolve',
-        description=(''))
-    group1 = parser.add_argument_group('Options', '')
-    group1.add_argument('query', metavar="STRING", type=str,
+        description=(f'{PROGRAM} (v{VERSION}) - Download FASTQs from ENA')
+    )
+    group1 = parser.add_argument_group('Required Options', '')
+    group1.add_argument('query', metavar="ACCESSION", type=str,
                         help=('ENA accession to query. (Study, Experiment, or '
                               'Run accession)'))
-    group1.add_argument('output', metavar="OUTPUT_DIR", type=str,
-                        help=('Directory to output downloads to.'))
-    group1.add_argument('--quiet', action='store_true', default=False,
-                        help='Do not print current status.')
-    group1.add_argument('--group_by_experiment', action='store_true',
-                        default=False,
-                        help='Group runs by experiment accession.')
-    group1.add_argument('--group_by_sample', action='store_true',
-                        default=False, help='Group runs by sample accession.')
-    group1.add_argument('--is_study', action='store_true', default=False,
-                        help='Query is a study accession.')
-    group1.add_argument('--is_experiment', action='store_true', default=False,
-                        help='Query is an experiment accession.')
-    group1.add_argument('--is_run', action='store_true', default=False,
-                        help='Query is a run accession.')
-    group1.add_argument('--ftp', action='store_true', default=False,
-                        help='Skip Aspera Connect and use FTP downloads.')
-    group1.add_argument('--nextflow', action='store_true', default=False,
-                        help='Output instrument model and paired status.')
-    group1.add_argument('--debug', action='store_true', default=False,
+
+    group2 = parser.add_argument_group('Aspera Connect Options')
+    group2.add_argument('--aspera', metavar="STRING", type=str,
+                        help='Path to the Aspera Connect tool "ascp" (Default: "which ascp")')
+    group2.add_argument(
+        '--aspera_key', metavar="STRING", type=str,
+        help='Path to Aspera Connect private key, if not given, guess based on ascp path'
+    )
+    group2.add_argument('--aspera_speed', metavar="STRING", type=str, default="100M",
+                        help='Speed at which Aspera Connect will download. (Default: 100M)')
+
+    group3 = parser.add_argument_group('Query Related Options')
+    group3.add_argument('--is_study', action='store_true', help='Query is a Study.')
+    group3.add_argument('--is_experiment', action='store_true', help='Query is an Experiment.')
+    group3.add_argument('--is_run', action='store_true', help='Query is a Run.')
+    group3.add_argument('--group_by_experiment', action='store_true',
+                        help='Group Runs by experiment accession.')
+    group3.add_argument('--group_by_sample', action='store_true',
+                        help='Group Runs by sample accession.')
+
+    group4 = parser.add_argument_group('Helpful Options')
+    group4.add_argument('--outdir', metavar="OUTPUT_DIR", type=str, default='./',
+                        help=('Directory to output downloads to. (Default: ./)'))
+    group4.add_argument('--max_retry', metavar="INT", type=int, default=10,
+                        help='Maximum times to retry downloads (Default: 10)')
+    group4.add_argument('--ftp_only', action='store_true', help='FTP only downloads.')
+    group4.add_argument('--silent', action='store_true',
+                        help='Only critical errors will be printed.')
+    group4.add_argument('--debug', action='store_true',
                         help='Skip downloads, print what will be downloaded.')
+    group4.add_argument('--version', action='version', version=f'{PROGRAM} {VERSION}')
+
+    if len(sys.argv) == 1:
+        parser.print_help()
+        sys.exit(0)
 
     args = parser.parse_args()
-    if args.quiet:
-        logging.basicConfig(stream=sys.stdout, level=logging.ERROR)
-    else:
-        logging.basicConfig(stream=sys.stdout, level=logging.INFO)
+    logging.basicConfig(stream=sys.stdout,
+                        level=logging.ERROR if args.silent else logging.INFO)
 
-    query = None
-    if args.is_study:
-        query = 'study_accession={0}'.format(args.query)
-    elif args.is_experiment:
-        query = 'experiment_accession={0}'.format(args.query)
-    elif args.is_run:
-        query = 'run_accession={0}'.format(args.query)
-    else:
-        # Try to guess...
-        if args.query[1:3] == 'RR':
-            query = 'run_accession={0}'.format(args.query)
-        elif args.query[1:3] == 'RX':
-            query = 'experiment_accession={0}'.format(args.query)
-        else:
-            query = 'study_accession={0}'.format(args.query)
+    aspera = check_aspera(args.aspera, args.aspera_key, args.aspera_speed) if args.aspera else None
+    if not aspera:
+        log_stdout("Aspera Connect not available, using FTP")
+        args.ftp_only = True
 
+    outdir = os.getcwd() if args.outdir == './' else f'{args.outdir}'
+    query = parse_query(args.query, args.is_study, args.is_experiment, args.is_run)
+
+    # Start Download Process
     ena_data = get_run_info(query)
-
-    outdir = os.getcwd() if args.output == './' else '{0}'.format(args.output)
-    log_stdout('Query: {0}'.format(args.query), quiet=args.quiet)
-    log_stdout('Total Runs To Download: {0}'.format(len(ena_data)))
-
-    # FASTQ file names
-    runs = None
-    is_miseq = False
-    is_paired = False
-    r1 = None
-    r2 = None
-    if args.group_by_experiment or args.group_by_sample:
-        runs = {}
+    log_stdout(f'Query: {args.query}')
+    log_stdout(f'Total Runs To Download: {len(ena_data)}')
+    runs = {} if args.group_by_experiment or args.group_by_sample else None
     for run in ena_data:
-        log_stdout('\tWorking on run {0}...'.format(run['run_accession']))
-
-        aspera = run['fastq_aspera'].split(';')
+        log_stdout(f'\tWorking on run {run["run_accession"]}...')
+        fasp = run['fastq_aspera'].split(';')
         ftp = run['fastq_ftp'].split(';')
         md5 = run['fastq_md5'].split(';')
-        is_paired = True if run['library_layout'] == 'PAIRED' else False
-        for i in range(len(aspera)):
-            is_r1 = False
+        for i in range(len(fasp)):
             is_r2 = False
             # If run is paired only include *_1.fastq and *_2.fastq, rarely a
             # run can have 3 files.
             # Example:ftp://ftp.sra.ebi.ac.uk/vol1/fastq/ERR114/007/ERR1143237
-            if is_paired:
-                if aspera[i].endswith('_2.fastq.gz'):
+            if run['library_layout'] == 'PAIRED':
+                if fasp[i].endswith('_2.fastq.gz'):
                     # Example: ERR1143237_2.fastq.gz
                     is_r2 = True
-                elif aspera[i].endswith('_1.fastq.gz'):
+                elif fasp[i].endswith('_1.fastq.gz'):
                     # Example: ERR1143237_1.fastq.gz
                     pass
                 else:
                     # Example: ERR1143237.fastq.gz
                     # Not apart of the paired end read, so skip this file. Or,
                     # its the only fastq file, and its not a paired
-                    obs_fq = os.path.basename(aspera[i])
-                    exp_fq = '{0}.fastq.gz'.format(run['run_accession'])
-                    if (len(aspera) == 1 and obs_fq == exp_fq):
-                        is_paired = False
-                    else:
+                    obs_fq = os.path.basename(fasp[i])
+                    exp_fq = f'{run["run_accession"]}.fastq.gz'
+                    if (len(fasp) != 1 and obs_fq != exp_fq):
                         continue
 
             # Download Run
             if md5[i] and not args.debug:
-                success, fastq = download_fastq(aspera[i], ftp[i], outdir,
-                                                md5[i], use_ftp=args.ftp)
+                success, fastq = download_fastq( fasp[i], ftp[i], outdir, md5[i], aspera,
+                                                max_retry=args.max_retry, ftp_only=args.ftp_only)
                 if success:
                     if args.group_by_experiment or args.group_by_sample:
                         name = run["sample_accession"]
@@ -281,48 +356,31 @@ if __name__ == '__main__':
                         if name not in runs:
                             runs[name] = {'r1': [], 'r2': []}
 
-                            if 'miseq' in run['instrument_model'].lower():
-                                is_miseq = True
-
                         if is_r2:
                             runs[name]['r2'].append(fastq)
                         else:
                             runs[name]['r1'].append(fastq)
                 else:
-                    print(
-                        "Failed to download matching files after 20 attempts "
-                        "(10 via Aspera Connect, and 10 via FTP). Please try "
-                        "again later or manually download from ENA."
+                    logging.error(
+                        f'Download files after {args.max_retry} attempts (Aspera and/or '
+                        'FTP). Please try again later or manually from ENA.'
                     )
-                    sys.exit()
+                    sys.exit(1)
 
     # If applicable, merge runs
     if runs and not args.debug:
         for name, vals in runs.items():
             if len(vals['r1']) and len(vals['r2']):
-                # Not all runs labled as paired are actually paired...
+                # Not all runs labled as paired are actually paired.
                 if len(vals['r1']) == len(vals['r2']):
-                    log_stdout(
-                        "\tMerging paired end runs to {0}...".format(name)
-                    )
-                    r1 = '{0}/{1}_R1.fastq.gz'.format(outdir, name)
-                    r2 = '{0}/{1}_R2.fastq.gz'.format(outdir, name)
-                    merge_runs(vals['r1'], r1)
-                    merge_runs(vals['r2'], r2)
+                    log_stdout(f'\tMerging paired end runs to {name}...')
+                    merge_runs(vals['r1'], f'{outdir}/{name}_R1.fastq.gz')
+                    merge_runs(vals['r2'], f'{outdir}/{name}_R2.fastq.gz')
                 else:
-                    log_stdout("\tMerging single end runs to experiment...")
-                    r1 = '{0}/{1}.fastq.gz'.format(outdir, name)
-                    merge_runs(vals['r1'], r1)
+                    log_stdout('\tMerging single end runs to experiment...')
+                    merge_runs(vals['r1'], f'{outdir}/{name}.fastq.gz')
             else:
-                log_stdout("\tMerging single end runs to experiment...")
-                r1 = '{0}/{1}.fastq.gz'.format(outdir, name)
-                merge_runs(vals['r1'], r1)
-        write_json(runs, "{0}/ena-run-mergers.json".format(outdir))
-    write_json(ena_data, "{0}/ena-run-info.json".format(outdir))
-
-    if args.nextflow:
-        # Assumes grouped by single experiment/sample was downloaded! Mainly
-        # used for Staphopia Nextflow pipeline.
-        fq2 = "--fq2 {0}".format(r2) if r2 else ""
-        is_miseq = "--is_miseq" if is_miseq else ""
-        print("--fq1 {0} {1} {2}".format(r1, fq2, is_miseq))
+                log_stdout('\tMerging single end runs to experiment...')
+                merge_runs(vals['r1'], f'{outdir}/{name}.fastq.gz')
+        write_json(runs, f'{outdir}/ena-run-mergers.json')
+    write_json(ena_data, f'{outdir}/ena-run-info.json')
