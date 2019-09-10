@@ -1,3 +1,5 @@
+[![Anaconda-Server Badge](https://anaconda.org/bioconda/ena-dl/badges/installer/conda.svg)](https://conda.anaconda.org/bioconda) [![Anaconda-Server Badge](https://anaconda.org/bioconda/ena-dl/badges/downloads.svg)](https://anaconda.org/bioconda/ena-dl)
+
 # ena-dl
 ena-dl, short for *'ENA download'*, is a tool for downloading FASTQ files from the [European Nucleotide Archive](https://www.ebi.ac.uk/ena). ENA was chosen over the [Sequence Read Archive](https://www.ncbi.nlm.nih.gov/sra) due to the availability of FASTQ files without the need for conversion (e.g. SRA format to FASTQ).
 
